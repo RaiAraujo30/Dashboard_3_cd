@@ -1,0 +1,9 @@
+streamlit
+pandas
+numpy
+
+# Note: This project requires Python 3.14 or compatible version
+# The following packages will be installed automatically with compatible versions:
+# - streamlit (latest)
+# - pandas (2.3.3 or later)
+# - numpy (2.3.5 or later)
