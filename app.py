@@ -218,10 +218,10 @@ st.header("c) Produtos com Maior Gasto em Compras")
 # Top produtos por gasto total
 top_produtos = (
     df_filtrado
-    .groupby("produto")
+    .groupby("produto_id")
     .agg(
         gasto_total=("valor_total", "sum"),
-        quantidade_total=("quantidade", "sum"),
+        quantidade_total=("quantidade_comprada", "sum"),
         preco_medio=("valor_unitario", "mean")
     )
     .reset_index()
@@ -229,9 +229,12 @@ top_produtos = (
     .head(10)
 )
 
+# Renomear produto_id para melhor visualização
+top_produtos["produto_id"] = "Produto " + top_produtos["produto_id"].astype(str)
+
 st.subheader("Top 10 produtos com maior gasto")
 st.bar_chart(
-    top_produtos.set_index("produto")["gasto_total"],
+    top_produtos.set_index("produto_id")["gasto_total"],
     use_container_width=True,
     horizontal=True
 )
