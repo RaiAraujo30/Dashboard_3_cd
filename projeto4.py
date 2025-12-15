@@ -10,21 +10,15 @@ import streamlit as st
 import matplotlib.pyplot as plt
 
 
-# ==========================
-# Config / utilitários
-# ==========================
-APP_TITLE = "Super-Dashboard Integrado (Estoque + Vendas + Compras)"
 
-# Ajuste aqui se você quiser uma regra real de categorias por produto_id
-# (ex.: {1:"Bebidas", 2:"Kits", 3:"Acessórios", ...})
+APP_TITLE = "Dashboard Integrado: Estoque, Vendas e Compras"
+
 CATEGORY_MAP: Dict[int, str] = {}
 
-# Se não houver mapping, usamos buckets fixos
 DEFAULT_CATEGORY_BUCKETS = 5
 
 
 def find_csv(filename_candidates: list[str]) -> Path:
-    """Encontra o arquivo CSV (sem renomear)."""
     here = Path(__file__).resolve().parent
     for name in filename_candidates:
         p = here / name
@@ -43,7 +37,6 @@ def read_csv_semicolon(path: Path) -> pd.DataFrame:
 
 
 def parse_dates(df: pd.DataFrame) -> pd.DataFrame:
-    """Padroniza datas para datetime (sem timezone) em cada tabela."""
     df = df.copy()
 
     # vendas: dd/mm/yyyy
@@ -271,13 +264,19 @@ qtd_produtos_criticos = int(estoque_critico_df["produto_id"].nunique()) if not e
 # ==========================
 # Layout: KPIs
 # ==========================
-c1, c2, c3, c4, c5 = st.columns(5)
+# Primeira linha de KPIs
+c1, c2, c3 = st.columns(3)
 
-c1.metric("Receita total (período)", f"R$ {total_receita:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+c1.metric("Receita total (período)", f"R$ {int(total_receita):,}".replace(",", "."))
 c2.metric("Qtd vendida (período)", f"{total_qtd_vendida:,}".replace(",", "."))
-c3.metric("Gasto total em compras (período)", f"R$ {total_gasto_compras:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
-c4.metric("Valor total de estoque (estimado)", f"R$ {valor_total_estoque:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+c3.metric("Gasto total em compras (período)", f"R$ {int(total_gasto_compras):,}".replace(",", "."))
+
+# Segunda linha de KPIs
+c4, c5, c6 = st.columns(3)
+
+c4.metric("Valor total de estoque (estimado)", f"R$ {int(valor_total_estoque):,}".replace(",", "."))
 c5.metric("Produtos em estoque crítico", f"{qtd_produtos_criticos}")
+c6.metric("Qtd total em estoque", f"{qtd_total_estoque:,}".replace(",", "."))
 
 st.divider()
 
