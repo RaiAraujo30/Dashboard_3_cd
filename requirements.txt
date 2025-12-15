@@ -1,6 +1,7 @@
 streamlit
 pandas
 numpy
+matplotlib
 
 # Note: This project requires Python 3.14 or compatible version
 # The following packages will be installed automatically with compatible versions:
