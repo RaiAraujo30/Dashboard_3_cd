@@ -64,7 +64,7 @@ def build_product_dim_from_csv(produtos: pd.DataFrame) -> pd.DataFrame:
     # garante tipos
     if "produto_id" in df.columns:
         df["produto_id"] = pd.to_numeric(df["produto_id"], errors="coerce").astype("Int64")
-    dim = df[[c for c in ["produto_id", "produto", "categoria"] if c in df.columns]].dropna(subset=["produto_id"]).copy()
+    dim = df[[c for c in ["produto_id", "produto", "categoria", "custo_unitario"] if c in df.columns]].dropna(subset=["produto_id"]).copy()
     dim["produto_id"] = dim["produto_id"].astype(int)
     return dim
 
@@ -104,13 +104,12 @@ def load_data() -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]
 
 
 def latest_stock_snapshot(estoque: pd.DataFrame) -> pd.DataFrame:
-    """Retorna o estoque no último data_referencia disponível (por produto e local)."""
+    """Retorna o último registro por produto e localização (snapshot mais recente por grupo)."""
     df = estoque.dropna(subset=["data_referencia"]).copy()
     if df.empty:
         return df
-
-    last_date = df["data_referencia"].max()
-    snap = df[df["data_referencia"] == last_date].copy()
+    df = df.sort_values("data_referencia")
+    snap = df.groupby(["produto_id", "localizacao"], as_index=False).tail(1).copy()
     return snap
 
 
@@ -234,6 +233,9 @@ estoque_snap = latest_stock_snapshot(estoque_f)
 # custo unitário (para valor do estoque)
 unit_cost = purchase_unit_cost(compras)
 estoque_snap = estoque_snap.merge(unit_cost, on="produto_id", how="left")
+# Fallback: se não houver custo de compra recente, usar custo_unitario da tabela de produtos
+if "custo_unitario" in estoque_snap.columns:
+    estoque_snap["unit_cost"] = estoque_snap["unit_cost"].fillna(estoque_snap["custo_unitario"])  # type: ignore
 estoque_snap["unit_cost"] = estoque_snap["unit_cost"].fillna(0.0)
 estoque_snap["valor_estoque_estimado"] = estoque_snap["quantidade_estoque"] * estoque_snap["unit_cost"]
 
