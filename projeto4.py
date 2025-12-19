@@ -422,79 +422,74 @@ st.divider()
 # ==========================
 st.subheader("Gráficos de Suporte à Decisão")
 
-g1, g2 = st.columns([1.2, 1])
+st.markdown("**Série temporal mensal — Vendas acumuladas (qtd) x Compras recebidas acumuladas (qtd)**")
 
-# 1) Série temporal: vendas vs compras por mês
-with g1:
-    st.markdown("**Série temporal mensal: vendas (qtd) vs compras recebidas (qtd)**")
+vendas_ts = vendas_f.dropna(subset=["data_venda"]).copy()
+compras_ts = compras_entregues_f.dropna(subset=["data_compra"]).copy()
 
-    vendas_ts = vendas_f.dropna(subset=["data_venda"]).copy()
-    compras_ts = compras_entregues_f.dropna(subset=["data_compra"]).copy()
-
-    if vendas_ts.empty and compras_ts.empty:
-        st.write("Sem dados para o período selecionado.")
+if vendas_ts.empty and compras_ts.empty:
+    st.write("Sem dados para o período selecionado.")
+else:
+    if not vendas_ts.empty:
+        vendas_ts["mes"] = month_key(vendas_ts["data_venda"])
+        v_m = vendas_ts.groupby("mes", as_index=False)["quantidade_vendida"].sum().rename(
+            columns={"quantidade_vendida": "vendas_qtd"}
+        ).sort_values("mes")
+        v_m["vendas_acum"] = v_m["vendas_qtd"].cumsum()
     else:
-        if not vendas_ts.empty:
-            vendas_ts["mes"] = month_key(vendas_ts["data_venda"])
-            v_m = vendas_ts.groupby("mes", as_index=False)["quantidade_vendida"].sum().rename(
-                columns={"quantidade_vendida": "vendas_qtd"}
-            )
-        else:
-            v_m = pd.DataFrame({"mes": [], "vendas_qtd": []})
+        v_m = pd.DataFrame({"mes": [], "vendas_qtd": [], "vendas_acum": []})
 
-        if not compras_ts.empty:
-            compras_ts["mes"] = month_key(compras_ts["data_compra"])
-            c_m = compras_ts.groupby("mes", as_index=False)["quantidade_comprada"].sum().rename(
-                columns={"quantidade_comprada": "compras_qtd"}
-            )
-        else:
-            c_m = pd.DataFrame({"mes": [], "compras_qtd": []})
-
-        ts = pd.merge(v_m, c_m, on="mes", how="outer").fillna(0).sort_values("mes")
-
-        fig = plt.figure()
-        plt.plot(ts["mes"], ts["vendas_qtd"], marker="o")
-        plt.plot(ts["mes"], ts["compras_qtd"], marker="o")
-        plt.xticks(rotation=45, ha="right")
-        plt.xlabel("Mês")
-        plt.ylabel("Quantidade")
-        plt.legend(["Vendas (qtd)", "Compras recebidas (qtd)"])
-        plt.tight_layout()
-        st.pyplot(fig, use_container_width=True)
-
-# 2) Comparativo de fornecedores: preço médio, prazo médio, volume
-with g2:
-    st.markdown("**Fornecedores (entregas): preço médio x prazo médio (tamanho = volume)**")
-    if compras_entregues_f.empty:
-        st.write("Sem compras no período.")
+    if not compras_ts.empty:
+        compras_ts["mes"] = month_key(compras_ts["data_compra"])
+        c_m = compras_ts.groupby("mes", as_index=False)["quantidade_comprada"].sum().rename(
+            columns={"quantidade_comprada": "compras_qtd"}
+        ).sort_values("mes")
+        c_m["compras_acum"] = c_m["compras_qtd"].cumsum()
     else:
-        sup = (
-            compras_entregues_f.groupby("fornecedor", as_index=False)
-            .agg(
-                preco_medio=("valor_unitario", "mean"),
-                prazo_medio=("prazo_entrega_dias", "mean"),
-                volume=("quantidade_comprada", "sum"),
-            )
-            .sort_values("volume", ascending=False)
+        c_m = pd.DataFrame({"mes": [], "compras_qtd": [], "compras_acum": []})
+
+    ts = pd.merge(v_m, c_m, on="mes", how="outer").fillna(0).sort_values("mes")
+
+    fig = plt.figure()
+    plt.plot(ts["mes"], ts["vendas_acum"], marker="o")
+    plt.plot(ts["mes"], ts["compras_acum"], marker="o")
+    plt.xticks(rotation=45, ha="right")
+    plt.xlabel("Mês")
+    plt.ylabel("Quantidade acumulada")
+    plt.legend(["Vendas acumuladas (qtd)", "Compras recebidas acumuladas (qtd)"])
+    plt.tight_layout()
+    st.pyplot(fig, use_container_width=True)
+
+st.markdown("**Fornecedores (Entregas) — Preço médio x Prazo médio (tamanho = volume)**")
+if compras_entregues_f.empty:
+    st.write("Sem compras no período.")
+else:
+    sup = (
+        compras_entregues_f.groupby("fornecedor", as_index=False)
+        .agg(
+            preco_medio=("valor_unitario", "mean"),
+            prazo_medio=("prazo_entrega_dias", "mean"),
+            volume=("quantidade_comprada", "sum"),
         )
-        sup["preco_medio"] = sup["preco_medio"].astype(float)
-        sup["prazo_medio"] = sup["prazo_medio"].astype(float)
-        sup["volume"] = sup["volume"].astype(float)
+        .sort_values("volume", ascending=False)
+    )
+    sup["preco_medio"] = sup["preco_medio"].astype(float)
+    sup["prazo_medio"] = sup["prazo_medio"].astype(float)
+    sup["volume"] = sup["volume"].astype(float)
 
-        # normaliza tamanho (sem escolher cor)
-        sizes = 50 + 450 * (sup["volume"] / max(sup["volume"].max(), 1.0))
+    sizes = 50 + 450 * (sup["volume"] / max(sup["volume"].max(), 1.0))
 
-        fig = plt.figure()
-        plt.scatter(sup["prazo_medio"], sup["preco_medio"], s=sizes, alpha=0.6)
-        for _, r in sup.head(12).iterrows():  # evita poluição visual
-            plt.annotate(str(r["fornecedor"]), (r["prazo_medio"], r["preco_medio"]), fontsize=8)
-        plt.xlabel("Prazo médio (dias)")
-        plt.ylabel("Preço médio (R$)")
-        plt.tight_layout()
-        st.pyplot(fig, use_container_width=True)
+    fig = plt.figure()
+    plt.scatter(sup["prazo_medio"], sup["preco_medio"], s=sizes, alpha=0.6)
+    for _, r in sup.head(12).iterrows():
+        plt.annotate(str(r["fornecedor"]), (r["prazo_medio"], r["preco_medio"]), fontsize=8)
+    plt.xlabel("Prazo médio (dias)")
+    plt.ylabel("Preço médio (R$)")
+    plt.tight_layout()
+    st.pyplot(fig, use_container_width=True)
 
 # 3) Heatmap: relação estoque x vendas x compras (top produtos)
-st.markdown("**Heatmap (normalizado) — Estoque x Vendas x Compras (Top produtos por receita)**")
+st.markdown("**Heatmap — Estoque x Vendas x Compras (top por receita, normalizado)**")
 
 # agrega por produto
 prod_metrics = dim_prod[dim_prod["produto_id"].isin(prod_ids)][["produto_id", "produto", "categoria"]].copy()
