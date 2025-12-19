@@ -225,6 +225,9 @@ if selected_loja != "(Todas)":
 vendas_f = vendas_f[(vendas_f["data_venda"] >= start_date) & (vendas_f["data_venda"] < end_date)]
 compras_f = compras_f[(compras_f["data_compra"] >= start_date) & (compras_f["data_compra"] < end_date)]
 
+# Considera apenas compras entregues para métricas de "compras recebidas"
+compras_entregues_f = compras_f[compras_f["status_compra"].astype(str).str.lower() == "entregue"].copy()
+
 # snapshot de estoque (última referência) *depois* de filtrar produtos
 estoque_snap = latest_stock_snapshot(estoque_f)
 
@@ -240,13 +243,25 @@ estoque_snap["valor_estoque_estimado"] = estoque_snap["quantidade_estoque"] * es
 total_receita = float(vendas_f["valor_total"].sum()) if not vendas_f.empty else 0.0
 total_qtd_vendida = int(vendas_f["quantidade_vendida"].sum()) if not vendas_f.empty else 0
 
-total_gasto_compras = float(compras_f["valor_total"].sum()) if not compras_f.empty else 0.0
-total_qtd_comprada = int(compras_f["quantidade_comprada"].sum()) if not compras_f.empty else 0
+total_gasto_compras = float(compras_entregues_f["valor_total"].sum()) if not compras_entregues_f.empty else 0.0
+total_qtd_comprada = int(compras_entregues_f["quantidade_comprada"].sum()) if not compras_entregues_f.empty else 0
 
 valor_total_estoque = float(estoque_snap["valor_estoque_estimado"].sum()) if not estoque_snap.empty else 0.0
 qtd_total_estoque = int(estoque_snap["quantidade_estoque"].sum()) if not estoque_snap.empty else 0
 
-estoque_critico_df = estoque_snap[estoque_snap["quantidade_estoque"] < estoque_snap["estoque_minimo"]].copy()
+# Agrupa por produto: soma estoque e soma mínimos por localização, para detecção de crítico
+if not estoque_snap.empty:
+    est_agg = (
+        estoque_snap.groupby(["produto_id", "produto", "categoria"], as_index=False)
+        .agg(
+            estoque_atual=("quantidade_estoque", "sum"),
+            estoque_minimo=("estoque_minimo", "sum"),
+            valor_estoque_estimado=("valor_estoque_estimado", "sum"),
+        )
+    )
+    estoque_critico_df = est_agg[est_agg["estoque_atual"] < est_agg["estoque_minimo"]].copy()
+else:
+    estoque_critico_df = pd.DataFrame(columns=["produto_id", "produto", "categoria", "estoque_atual", "estoque_minimo", "valor_estoque_estimado"])
 qtd_produtos_criticos = int(estoque_critico_df["produto_id"].nunique()) if not estoque_critico_df.empty else 0
 
 # ==========================
@@ -290,7 +305,7 @@ with col_right:
     # status e alertas
     snap_prod = estoque_snap[estoque_snap["produto_id"] == prod_360_id].copy()
     qtd_atual = int(snap_prod["quantidade_estoque"].sum()) if not snap_prod.empty else 0
-    qtd_min = int(snap_prod["estoque_minimo"].max()) if not snap_prod.empty else 0
+    qtd_min = int(snap_prod["estoque_minimo"].sum()) if not snap_prod.empty else 0
     if qtd_atual < qtd_min:
         st.error(f"⚠️ Risco de ruptura: estoque atual ({qtd_atual}) abaixo do mínimo ({qtd_min}).")
     elif qtd_atual > 3 * max(qtd_min, 1):
@@ -300,7 +315,7 @@ with col_right:
 
 # Cards do produto
 vendas_prod = vendas_f[vendas_f["produto_id"] == prod_360_id]
-compras_prod = compras_f[compras_f["produto_id"] == prod_360_id]
+compras_prod = compras_entregues_f[compras_entregues_f["produto_id"] == prod_360_id]
 
 vendas_acum = float(vendas_prod["valor_total"].sum()) if not vendas_prod.empty else 0.0
 qtd_vendida_prod = int(vendas_prod["quantidade_vendida"].sum()) if not vendas_prod.empty else 0
@@ -348,15 +363,7 @@ with i1:
     if estoque_critico_df.empty:
         st.write("Sem produtos críticos no snapshot mais recente.")
     else:
-        crit = (
-            estoque_critico_df.groupby(["produto_id", "produto", "categoria"], as_index=False)
-            .agg(
-                estoque_atual=("quantidade_estoque", "sum"),
-                estoque_minimo=("estoque_minimo", "max"),
-                valor_estoque_estimado=("valor_estoque_estimado", "sum"),
-            )
-            .sort_values(["estoque_atual", "estoque_minimo"])
-        )
+        crit = estoque_critico_df.sort_values(["estoque_atual", "estoque_minimo"]).copy()
         st.dataframe(crit, use_container_width=True, hide_index=True)
 
 with i2:
@@ -376,11 +383,11 @@ j1, j2 = st.columns([1, 1])
 
 with j1:
     st.markdown("**Produtos com Maior Gasto em Compras (R$)**")
-    if compras_f.empty:
+    if compras_entregues_f.empty:
         st.write("Sem compras no período.")
     else:
         top_spend = (
-            compras_f.groupby(["produto_id", "produto", "categoria"], as_index=False)["valor_total"]
+            compras_entregues_f.groupby(["produto_id", "produto", "categoria"], as_index=False)["valor_total"]
             .sum()
             .sort_values("valor_total", ascending=False)
             .head(10)
@@ -389,11 +396,11 @@ with j1:
 
 with j2:
     st.markdown("**Tempo Médio de Reposição por Fornecedor (dias)**")
-    if compras_f.empty:
+    if compras_entregues_f.empty:
         st.write("Sem compras no período.")
     else:
         rep = (
-            compras_f.groupby("fornecedor", as_index=False)
+            compras_entregues_f.groupby("fornecedor", as_index=False)
             .agg(
                 prazo_medio=("prazo_entrega_dias", "mean"),
                 volume=("quantidade_comprada", "sum"),
@@ -417,10 +424,10 @@ g1, g2 = st.columns([1.2, 1])
 
 # 1) Série temporal: vendas vs compras por mês
 with g1:
-    st.markdown("**Série temporal mensal: vendas (qtd) vs compras (qtd)**")
+    st.markdown("**Série temporal mensal: vendas (qtd) vs compras recebidas (qtd)**")
 
     vendas_ts = vendas_f.dropna(subset=["data_venda"]).copy()
-    compras_ts = compras_f.dropna(subset=["data_compra"]).copy()
+    compras_ts = compras_entregues_f.dropna(subset=["data_compra"]).copy()
 
     if vendas_ts.empty and compras_ts.empty:
         st.write("Sem dados para o período selecionado.")
@@ -449,18 +456,18 @@ with g1:
         plt.xticks(rotation=45, ha="right")
         plt.xlabel("Mês")
         plt.ylabel("Quantidade")
-        plt.legend(["Vendas (qtd)", "Compras (qtd)"])
+        plt.legend(["Vendas (qtd)", "Compras recebidas (qtd)"])
         plt.tight_layout()
         st.pyplot(fig, use_container_width=True)
 
 # 2) Comparativo de fornecedores: preço médio, prazo médio, volume
 with g2:
-    st.markdown("**Fornecedores: preço médio x prazo médio (tamanho = volume)**")
-    if compras_f.empty:
+    st.markdown("**Fornecedores (entregas): preço médio x prazo médio (tamanho = volume)**")
+    if compras_entregues_f.empty:
         st.write("Sem compras no período.")
     else:
         sup = (
-            compras_f.groupby("fornecedor", as_index=False)
+            compras_entregues_f.groupby("fornecedor", as_index=False)
             .agg(
                 preco_medio=("valor_unitario", "mean"),
                 prazo_medio=("prazo_entrega_dias", "mean"),
@@ -507,9 +514,9 @@ if not vendas_f.empty:
 else:
     ven_by = pd.DataFrame({"produto_id": [], "vendas_qtd": [], "receita": []})
 
-# Compras no período
-if not compras_f.empty:
-    com_by = compras_f.groupby("produto_id", as_index=False).agg(
+# Compras no período (apenas entregues)
+if not compras_entregues_f.empty:
+    com_by = compras_entregues_f.groupby("produto_id", as_index=False).agg(
         compras_qtd=("quantidade_comprada", "sum"),
         gasto=("valor_total", "sum"),
     )
