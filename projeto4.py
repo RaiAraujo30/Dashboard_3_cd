@@ -43,9 +43,9 @@ def parse_dates(df: pd.DataFrame) -> pd.DataFrame:
     if "data_venda" in df.columns:
         df["data_venda"] = pd.to_datetime(df["data_venda"], dayfirst=True, errors="coerce")
 
-    # compras: yyyy-mm-dd (normalmente)
+    # compras: dd/mm/yyyy
     if "data_compra" in df.columns:
-        df["data_compra"] = pd.to_datetime(df["data_compra"], errors="coerce")
+        df["data_compra"] = pd.to_datetime(df["data_compra"], dayfirst=True, errors="coerce")
 
     # estoque: yyyy-mm-dd (normalmente)
     if "data_referencia" in df.columns:
@@ -54,24 +54,18 @@ def parse_dates(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def build_product_dim(produto_ids: pd.Series) -> pd.DataFrame:
-    """Cria uma dimensão simples de produto com categoria derivada."""
-    unique_ids = pd.Series(sorted(pd.unique(produto_ids.dropna().astype(int)))).astype(int)
-
-    def category_for(pid: int) -> str:
-        if pid in CATEGORY_MAP:
-            return CATEGORY_MAP[pid]
-        # regra simples e determinística para permitir filtro por categoria:
-        bucket = ((pid - 1) % DEFAULT_CATEGORY_BUCKETS) + 1
-        return f"Categoria {bucket}"
-
-    dim = pd.DataFrame(
-        {
-            "produto_id": unique_ids,
-            "produto": unique_ids.map(lambda x: f"Produto {x}"),
-            "categoria": unique_ids.map(category_for),
-        }
-    )
+def build_product_dim_from_csv(produtos: pd.DataFrame) -> pd.DataFrame:
+    """Cria a dimensão de produtos a partir do CSV real de produtos."""
+    cols = produtos.columns.str.lower().tolist()
+    # normaliza nomes esperados
+    df = produtos.copy()
+    if "produto_nome" in df.columns:
+        df = df.rename(columns={"produto_nome": "produto"})
+    # garante tipos
+    if "produto_id" in df.columns:
+        df["produto_id"] = pd.to_numeric(df["produto_id"], errors="coerce").astype("Int64")
+    dim = df[[c for c in ["produto_id", "produto", "categoria"] if c in df.columns]].dropna(subset=["produto_id"]).copy()
+    dim["produto_id"] = dim["produto_id"].astype(int)
     return dim
 
 
@@ -91,21 +85,15 @@ def load_data() -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]
     estoque_path = find_csv(["FCD_estoque.csv"])
     vendas_path = find_csv(["FCD_vendas.csv"])
     compras_path = find_csv(["FCD_compras (1).csv", "FCD_compras.csv"])
+    produtos_path = find_csv(["FCD_produtos.csv"])
 
     estoque = parse_dates(read_csv_semicolon(estoque_path))
     vendas = parse_dates(read_csv_semicolon(vendas_path))
     compras = parse_dates(read_csv_semicolon(compras_path))
+    produtos = read_csv_semicolon(produtos_path)
 
-    # Produto dim (como não existe tabela de produtos, criamos)
-    all_prod_ids = pd.concat(
-        [
-            estoque.get("produto_id", pd.Series(dtype=int)),
-            vendas.get("produto_id", pd.Series(dtype=int)),
-            compras.get("produto_id", pd.Series(dtype=int)),
-        ],
-        ignore_index=True,
-    )
-    dim_prod = build_product_dim(all_prod_ids)
+    # Dimensão de produtos usando a tabela real
+    dim_prod = build_product_dim_from_csv(produtos)
 
     # Join para ter "produto" e "categoria" nas tabelas
     estoque = estoque.merge(dim_prod, on="produto_id", how="left")
